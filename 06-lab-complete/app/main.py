@@ -8,6 +8,7 @@ import json
 import logging
 import sys
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 import redis
@@ -20,6 +21,7 @@ from app.auth import verify_api_key
 from app.config import settings
 from app.cost_guard import check_budget, estimate_tokens, record_cost
 from app.rate_limiter import check_rate_limit
+from app import redis_client
 from app.redis_client import redis_healthy
 from utils.mock_llm import ask as llm_ask
 
@@ -58,7 +60,22 @@ def log_event(event: str, level: int = logging.INFO, **fields) -> None:
     logger.log(level, event, extra={"extra_fields": fields})
 
 
-app = FastAPI(title="Production AI Agent")
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """Graceful shutdown.
+
+    Uvicorn tự bắt SIGTERM: ngừng nhận kết nối mới, chờ request đang chạy xong
+    rồi mới chạy phần sau `yield`. Vì vậy app KHÔNG tự đăng ký signal handler
+    (làm vậy sẽ đè handler của uvicorn) — chỉ dọn tài nguyên ở đây.
+    """
+    log_event("startup", environment=settings.environment, port=settings.port,
+              redis_ok=redis_healthy())
+    yield
+    log_event("shutdown", msg="in-flight requests drained, closing Redis")
+    redis_client.close()
+
+
+app = FastAPI(title="Production AI Agent", lifespan=lifespan)
 
 
 @app.middleware("http")
