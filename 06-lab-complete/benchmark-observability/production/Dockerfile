@@ -25,6 +25,8 @@ RUN chown -R agent:agent /app
 
 USER agent
 
+# useradd -d /app → HOME=/app, nên phải chỉ rõ user site-packages đã copy sang /home/agent/.local
+ENV PYTHONUSERBASE=/home/agent/.local
 ENV PATH=/home/agent/.local/bin:$PATH
 ENV PYTHONPATH=/app
 ENV PYTHONDONTWRITEBYTECODE=1
