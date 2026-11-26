@@ -139,6 +139,46 @@ $ curl -X POST http://localhost/ask -H "Content-Type: application/json" -d '{"qu
 {"answer":"Đây là câu trả lời từ AI agent (mock). Trong production, đây sẽ là response từ OpenAI/Anthropic."}
 ```
 
+## Part 3: Cloud Deployment
+
+### Exercise 3.1: Railway deployment
+
+- **URL public:** https://agent-production-9adfa0eb.up.railway.app (agent Part 6, chi tiết trong [`DEPLOYMENT.md`](DEPLOYMENT.md)).
+- Các bước: `railway init --name k5-day14-agent` → `railway add --database redis` → `railway add --service agent` với biến `AGENT_API_KEY` (random, không commit), `REDIS_URL=${{Redis.REDIS_URL}}` (reference variable), `ENVIRONMENT=production` → `railway up` từ `06-lab-complete/` (build bằng Dockerfile theo `railway.toml`) → `railway domain`.
+- Kết quả 4 lệnh tự kiểm CP6 (chỉ in mã HTTP):
+
+```text
+$ curl -sS -o /dev/null -w '%{http_code}\n' "$BASE/health"                      → 200
+$ curl -sS -o /dev/null -w '%{http_code}\n' "$BASE/ready"                       → 200
+$ curl ... -X POST "$BASE/ask" -d '{"question":"Hello"}'  (không key)           → 401
+$ curl ... -X POST "$BASE/ask" -H "X-API-Key: $AGENT_API_KEY" -d '{"question":"Hello"}' → 200
+```
+
+`/ready` trả `{"status":"ready","redis":"ok"}`, tức agent trên Railway nói chuyện được với Redis qua private network. Ảnh: `screenshots/dashboard.png`, `running.png`, `test.png`.
+
+### Exercise 3.2: So sánh `railway.toml` với `render.yaml`
+
+| | `railway.toml` | `render.yaml` |
+| --- | --- | --- |
+| Phạm vi | Chỉ cấu hình **1 service** (build + deploy của service đang link) | **Blueprint** cả hạ tầng: web service `day14-agent` **và** Key Value `day14-redis` trong cùng file |
+| Build | `[build] builder = "DOCKERFILE"`, `dockerfilePath` | `runtime: docker`, `rootDir: 06-lab-complete`, `dockerfilePath` |
+| Health check | `[deploy] healthcheckPath = "/health"`, `healthcheckTimeout` | `healthCheckPath: /health` |
+| Restart | `restartPolicyType = "ON_FAILURE"`, `restartPolicyMaxRetries` | Render tự restart, không khai báo |
+| Biến môi trường / secret | **Không** nằm trong file: đặt bằng `railway variables` / dashboard; Redis nối bằng reference `${{Redis.REDIS_URL}}` | Khai báo trong file: giá trị thường ghi thẳng, secret dùng `generateValue: true` (Render tự sinh) hoặc `sync: false` (nhập tay trên dashboard), `REDIS_URL` lấy bằng `fromService: {type: keyvalue, property: connectionString}` |
+| Redis | Tạo riêng bằng `railway add --database redis` | Khai báo luôn trong blueprint (`type: keyvalue`) |
+
+**Vì sao khác:** Railway thiên về CLI/dashboard. Project và các service (kể cả database) được tạo bằng lệnh, còn file TOML chỉ là "config as code" cho phần build/deploy của một service. Render dùng mô hình Infrastructure-as-Code: một `render.yaml` mô tả toàn bộ service, dependency và cách nối biến giữa chúng, nên Render cần cú pháp riêng để không lộ secret (`generateValue`/`sync: false`). Cả hai đều dựa vào biến `PORT` do platform cấp, nên Dockerfile dùng `${PORT:-8000}`.
+
+### Exercise 3.3: Cloud Run CI/CD (`03-cloud-deployment/production-cloud-run/`)
+
+`cloudbuild.yaml` chạy pipeline 4 bước nối nhau bằng `waitFor`:
+1. **test**: `pip install` rồi `pytest tests/` trong `python:3.11-slim`. Test fail thì dừng, không build.
+2. **build**: `docker build` với 2 tag `:$COMMIT_SHA` và `:latest`, dùng `--cache-from :latest` để tận dụng layer cache.
+3. **push**: đẩy cả 2 tag lên Container Registry (`gcr.io/$PROJECT_ID/ai-agent`).
+4. **deploy**: `gcloud run deploy` image theo **commit SHA** (rollback được, không dùng `latest`) ở `asia-southeast1`, 1–10 instance (`min-instances=1` để tránh cold start), 512Mi/1 CPU, timeout 60s, secret lấy từ Secret Manager (`--set-secrets`).
+
+`service.yaml` là bản khai báo Knative tương đương: autoscale `minScale 1`/`maxScale 10`, `containerConcurrency: 80`, secret qua `secretKeyRef`, `livenessProbe` gọi `/health`, `startupProbe` gọi `/ready`.
+
 ## Part 4: API Security
 
 ### Exercise 4.1: API key authentication (`04-api-gateway/develop/app.py`)
