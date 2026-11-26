@@ -177,7 +177,7 @@ content-type: application/json
 
 ### Exercise 4.2: JWT authentication (`04-api-gateway/production/`)
 
-JWT flow trong `auth.py`: `POST /auth/token` kiểm username/password (`authenticate_user`), rồi `create_token` ký JWT **HS256** bằng `JWT_SECRET` (env) với claims `sub`, `role`, `iat`, `exp` (60 phút). Client gửi `Authorization: Bearer <token>`; `verify_token` decode + verify chữ ký và hạn, sai hoặc hết hạn thì trả **401**. Server không cần lưu session (stateless), và role nằm ngay trong token để phân quyền.
+JWT flow trong `auth.py`: `POST /auth/token` kiểm username/password (`authenticate_user`), rồi `create_token` ký JWT **HS256** bằng `JWT_SECRET` (env) với claims `sub`, `role`, `iat`, `exp` (60 phút). Client gửi `Authorization: Bearer <token>`; `verify_token` decode + verify chữ ký và hạn: thiếu token hoặc token hết hạn → **401**, token sai chữ ký/không hợp lệ → **403**. Server không cần lưu session (stateless), và role nằm ngay trong token để phân quyền.
 
 ### Exercise 4.3: Rate limiting
 
