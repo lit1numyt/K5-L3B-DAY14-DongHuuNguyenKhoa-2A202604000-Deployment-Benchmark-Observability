@@ -430,3 +430,50 @@ history messages: 18
 
 Nginx chuyển traffic sang 2 instance còn lại, mọi request vẫn 200 và history tiếp tục tăng (10 → 18 message), không mất dữ liệu. Xong thì `docker compose -p k5-day14-scaling down -v`.
 
+
+## Part 6: Final Project — output `check_production_ready.py`
+
+Chạy bản đầy đủ (có Docker build/run, Redis tạm, SIGTERM test) trong `06-lab-complete/`, kèm kiểm tra URL Railway:
+
+```text
+$ cd 06-lab-complete && python check_production_ready.py --public-url https://agent-production-9adfa0eb.up.railway.app
+...
+  📋 Checklist Deliverable
+     ✅ Dockerfile (multi-stage, < 500 MB)
+     ✅ docker-compose.yml (agent + redis)
+     ✅ .dockerignore
+     ✅ Health check endpoint (GET /health)
+     ✅ Readiness endpoint (GET /ready)
+     ✅ API Key authentication
+     ✅ Rate limiting
+     ✅ Cost guard
+     ✅ Config từ environment variables
+     ✅ Structured logging
+     ✅ Graceful shutdown
+     ✅ Public URL ready (Railway / Render config)
+----------------------------------------------------------------
+  Result: 12/12 tiêu chí đạt · 44/44 checks passed
+  🎉 PASS 12/12 — PRODUCTION READY! Deploy nào!
+================================================================
+
+```
+
+Mục 12 trong lần chạy này: `✅ Public URL: GET https://agent-production-9adfa0eb.up.railway.app/health → 200`.
+
+## AI log
+
+Toàn bộ lab được làm cùng **Claude Code (model Claude Opus 5.5)**, chạy như một agent trong terminal trên repo này: AI đọc tài liệu lab, sửa code, chạy lệnh và commit. Tôi giao việc, chọn phương án, đăng nhập Railway và kiểm tra lại kết quả. Mỗi commit AI tạo đều có dòng `Co-Authored-By: Claude`.
+
+| # | Hỏi / giao việc | Nhận được | Tôi sửa / kiểm tra thế nào |
+|---|---|---|---|
+| 1 | Đọc `CHECKPOINTS.md`, `RUBRIC.md`, `RULES.md`, `SUBMISSION.md`, lập kế hoạch làm CP0–CP8, commit theo từng phần | Kế hoạch theo thứ tự CP5 → CP1–4 → CP7 → CP8 → CP6. AI hỏi tôi chọn nền tảng deploy (tôi chọn **Railway**) và có push không | Duyệt kế hoạch trước khi cho chạy |
+| 2 | Part 6: hoàn thành các TODO trong `06-lab-complete/app/` | Mỗi concern là một commit riêng: config từ env, Redis client, API key (`compare_digest`), rate limit sliding window bằng Redis ZSET (429 + `Retry-After`), cost guard bằng `INCRBYFLOAT` theo ngày/tháng (402), log JSON, `/health` + `/ready`, lifespan shutdown, Dockerfile multi-stage non-root, compose, `railway.toml`/`render.yaml` | Lần chạy checker đầu tiên chỉ đạt 6/12 vì pull `redis:7-alpine` bị timeout. Pull trước rồi chạy lại được **PASS 12/12**. Đọc lại từng file trong `app/` để tự giải thích được luồng `/ask`: auth → rate limit → budget → LLM → ghi cost |
+| 3 | Part 1, 2, 4, 5: chạy ví dụ, ghi câu trả lời | Lệnh và output thật (curl 401/200/429, `docker images`, `test_stateless.py`) dán vào từng mục | Một chỗ sai được phát hiện khi chạy lại: JWT **sai** trả **403**, chỉ JWT **hết hạn** mới trả 401 (`04-api-gateway/production/auth.py`). Đã sửa câu trả lời. Kích thước image (1670 MB so với 265 MB, −84.1%) lấy từ `docker images` |
+| 4 | Part 7 develop: load test, tail latency, eval | JSON trong `reports/`. Eval v2 ban đầu 91.3% vì knowledge base thiếu JWT và Kubernetes HPA. AI thêm 2 mục KB, eval lên 100% (23/23), và viết workflow CI `eval-gate.yml` dùng exit code của `run_eval.py` | Mọi số trong `BENCHMARK_REPORT.md` mục 1–3 lấy từ file JSON. Kiểm tra `--baseline` không có regression |
+| 5 | Part 7 production: Grafana, Jaeger, alert, chaos, scaling | Fix Dockerfile của observable agent (`PYTHONUSERBASE`, trước đó container crash vì `ModuleNotFoundError: uvicorn`). Ảnh chụp bằng headless Chrome. Script chaos poll `/api/v1/alerts` để đo thời gian tới firing | Phát hiện và **bỏ 2 lần đo scale không hợp lệ**: (1) `compose run` không có `--no-deps` làm agent bị đưa về 2 replica, (2) một lần Docker VM khựng (Locust 120 s chạy mất 504 s). Chạy lại, kiểm tra số agent/target giữa lần chạy rồi mới dùng số liệu. Đối chiếu `trace_id` trong Jaeger với log JSON |
+| 6 | Part 3: deploy Railway | AI dùng Railway CLI: `init`, `add --database redis`, `add --service agent` với biến môi trường, `up`, `domain`. Viết `DEPLOYMENT.md` và mục Part 3 | Tôi tự chạy `railway login`. `AGENT_API_KEY` sinh ngẫu nhiên và chỉ đặt trên Railway. Đã grep repo, không có key. 4 lệnh CP6 trả 200/200/401/200, checker `--public-url` qua |
+| 7 | Tự kiểm tra trước khi nộp | Checklist `SUBMISSION.md` | `git log --all --oneline -- '*.env' '.env'` không in gì; grep repo không có email hay số điện thoại; đủ 7 ảnh trong `screenshots/` |
+
+Môi trường và trở ngại (ghi lại để Lab Coach có thể chạy lại):
+- Python hệ thống là 3.14, không cài được `pydantic==2.9`. Dùng conda env Python 3.11.
+- Docker Hub chặn pull anonymous (429 rate limit). Base image `python:3.11-slim` được pull từ mirror `public.ecr.aws/docker/library/python:3.11-slim` rồi tag lại, `nginx:1.28-alpine` được tag lại từ `nginx:alpine` có sẵn trên máy (thực chất là nginx **1.31.10**, vẫn ≥ 1.27.3 nên hỗ trợ `resolve` trong upstream). Không file Dockerfile/compose nào bị sửa vì lý do này.
